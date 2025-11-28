@@ -11,7 +11,7 @@ spec:
     # ----------------------------------------------------------------------
     # ⬇️ ⬇️ CRITICAL: CHANGE THIS TO YOUR ACTUAL GIT REPO URL ⬇️ ⬇️
     # ----------------------------------------------------------------------
-    repoURL: https://github.com/YOUR_USERNAME/devops-eks-assignment.git 
+    repoURL: https://github.com/Prathima-R/devops-eks-assignment.git
     targetRevision: HEAD
     path: manifests # Points to the folder containing your YAMLs
   destination:
