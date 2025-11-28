@@ -122,8 +122,8 @@ resource "aws_eks_node_group" "main" {
   subnet_ids      = [aws_subnet.private_subnet.id] # Use private subnets for worker nodes
   instance_types  = ["t3.medium"]                   # <--- Change this if needed
   scaling_config {
-    desired_size = 2
-    max_size     = 3
+    desired_size = 1
+    max_size     = 2
     min_size     = 1
   }
 }
