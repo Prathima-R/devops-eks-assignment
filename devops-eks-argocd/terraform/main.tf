@@ -1,4 +1,4 @@
-# main.tf - EKS Cluster Provisioning without Modules
+# main.tf - EKS Cluster Provisioning without NAT Gateway
 
 # 1. AWS Provider Configuration
 provider "aws" {
@@ -11,11 +11,10 @@ provider "aws" {
 
 # 2. Virtual Private Cloud (VPC)
 resource "aws_vpc" "eks_vpc" {
-  cidr_block = "10.0.0.0/16"
+  cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
   tags = {
-    Name = "${var.cluster_name}-vpc"
-    # Required EKS tag for automatic discovery
+    Name                                        = "${var.cluster_name}-vpc"
     "kubernetes.io/cluster/${var.cluster_name}" = "owned"
   }
 }
@@ -32,12 +31,12 @@ resource "aws_internet_gateway" "eks_igw" {
 resource "aws_subnet" "public_subnet" {
   vpc_id                  = aws_vpc.eks_vpc.id
   cidr_block              = "10.0.10.0/24"
-  map_public_ip_on_launch = true # Instances get a public IP
-  availability_zone       = "${var.region}a" # Uses ap-south-2a
+  map_public_ip_on_launch = true
+  availability_zone       = "${var.region}a"
   tags = {
-    Name = "${var.cluster_name}-public-subnet"
-    "kubernetes.io/cluster/${var.cluster_name}" = "owned" # Required EKS tag
-    "kubernetes.io/role/elb"                    = "1"      # Required for Load Balancers
+    Name                                        = "${var.cluster_name}-public-subnet"
+    "kubernetes.io/cluster/${var.cluster_name}" = "owned"
+    "kubernetes.io/role/elb"                    = "1"
   }
 }
 
@@ -45,19 +44,36 @@ resource "aws_subnet" "public_subnet" {
 resource "aws_subnet" "private_subnet" {
   vpc_id            = aws_vpc.eks_vpc.id
   cidr_block        = "10.0.20.0/24"
-  availability_zone = "${var.region}b" # Uses ap-south-2b
+  availability_zone = "${var.region}b"
   tags = {
-    Name = "${var.cluster_name}-private-subnet"
+    Name                                        = "${var.cluster_name}-private-subnet"
     "kubernetes.io/cluster/${var.cluster_name}" = "owned"
-    "kubernetes.io/role/internal-elb"           = "1" # Required for Internal Load Balancers
+    "kubernetes.io/role/internal-elb"           = "1"
   }
 }
+
+# 6. Public Route Table (Required to allow traffic out from the Public Subnet)
+resource "aws_route_table" "public_route_table" {
+  vpc_id = aws_vpc.eks_vpc.id
+}
+
+resource "aws_route" "public_internet_route" {
+  route_table_id         = aws_route_table.public_route_table.id
+  destination_cidr_block = "0.0.0.0/0"
+  gateway_id             = aws_internet_gateway.eks_igw.id
+}
+
+resource "aws_route_table_association" "public_subnet_association" {
+  subnet_id      = aws_subnet.public_subnet.id
+  route_table_id = aws_route_table.public_route_table.id
+}
+
 
 # --------------------------------------------------------
 # EKS COMPONENTS: IAM Roles, Cluster, and Node Group
 # --------------------------------------------------------
 
-# 6. IAM Role for EKS Control Plane
+# 7. IAM Role for EKS Control Plane
 resource "aws_iam_role" "eks_master_role" {
   name = "${var.cluster_name}-master-role"
   assume_role_policy = jsonencode({
@@ -77,19 +93,22 @@ resource "aws_iam_role_policy_attachment" "eks_policy" {
   role       = aws_iam_role.eks_master_role.name
 }
 
-# 7. EKS Cluster
+# 8. EKS Cluster (Private Access Enabled to avoid NAT Gateway charges)
 resource "aws_eks_cluster" "main" {
   name     = var.cluster_name
   role_arn = aws_iam_role.eks_master_role.arn
-  version  = "1.29" # Kubernetes version
+  version  = "1.29" # Corrected version
 
   vpc_config {
     subnet_ids         = [aws_subnet.public_subnet.id, aws_subnet.private_subnet.id]
     security_group_ids = []
+    
+    # ⬇️ FIX: Allows private nodes to reach EKS API without NAT Gateway ⬇️
+    endpoint_private_access = true 
   }
 }
 
-# 8. IAM Role for EKS Node Group (Worker Nodes)
+# 9. IAM Role for EKS Node Group (Worker Nodes)
 resource "aws_iam_role" "node_role" {
   name = "${var.cluster_name}-node-role"
   assume_role_policy = jsonencode({
@@ -114,16 +133,27 @@ resource "aws_iam_role_policy_attachment" "node_policy_2" {
   role       = aws_iam_role.node_role.name
 }
 
-# 9. EKS Managed Node Group (Worker Nodes)
+# 10. EKS Managed Node Group (Worker Nodes)
 resource "aws_eks_node_group" "main" {
   cluster_name    = aws_eks_cluster.main.name
   node_group_name = "managed-nodes"
   node_role_arn   = aws_iam_role.node_role.arn
-  subnet_ids      = [aws_subnet.private_subnet.id] # Use private subnets for worker nodes
-  instance_types  = ["t3.medium"]                   # Default size
+  subnet_ids      = [aws_subnet.private_subnet.id] # Worker nodes in private subnet
+  instance_types  = ["t3.medium"]
   scaling_config {
     desired_size = 2
     max_size     = 3
     min_size     = 1
   }
+}
+
+# 11. Outputs
+output "kubeconfig_command" {
+  description = "Command to configure kubectl access"
+  value       = "aws eks update-kubeconfig --name ${aws_eks_cluster.main.name} --region ${var.region}"
+}
+
+output "cluster_endpoint" {
+  description = "The endpoint URL for the EKS control plane."
+  value       = aws_eks_cluster.main.endpoint
 }
