@@ -81,7 +81,7 @@ resource "aws_iam_role_policy_attachment" "eks_policy" {
 resource "aws_eks_cluster" "main" {
   name     = var.cluster_name
   role_arn = aws_iam_role.eks_master_role.arn
-  version  = "1.28" # Kubernetes version
+  version  = "1.29" # Kubernetes version
 
   vpc_config {
     subnet_ids         = [aws_subnet.public_subnet.id, aws_subnet.private_subnet.id]
