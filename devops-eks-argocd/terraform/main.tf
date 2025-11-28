@@ -1,4 +1,4 @@
-# main.tf - Simplified EKS Cluster Provisioning without Modules
+# main.tf - EKS Cluster Provisioning without Modules
 
 # 1. AWS Provider Configuration
 provider "aws" {
@@ -33,7 +33,7 @@ resource "aws_subnet" "public_subnet" {
   vpc_id                  = aws_vpc.eks_vpc.id
   cidr_block              = "10.0.10.0/24"
   map_public_ip_on_launch = true # Instances get a public IP
-  availability_zone       = "${var.region}a"
+  availability_zone       = "${var.region}a" # Uses ap-south-2a
   tags = {
     Name = "${var.cluster_name}-public-subnet"
     "kubernetes.io/cluster/${var.cluster_name}" = "owned" # Required EKS tag
@@ -45,7 +45,7 @@ resource "aws_subnet" "public_subnet" {
 resource "aws_subnet" "private_subnet" {
   vpc_id            = aws_vpc.eks_vpc.id
   cidr_block        = "10.0.20.0/24"
-  availability_zone = "${var.region}b"
+  availability_zone = "${var.region}b" # Uses ap-south-2b
   tags = {
     Name = "${var.cluster_name}-private-subnet"
     "kubernetes.io/cluster/${var.cluster_name}" = "owned"
@@ -120,10 +120,10 @@ resource "aws_eks_node_group" "main" {
   node_group_name = "managed-nodes"
   node_role_arn   = aws_iam_role.node_role.arn
   subnet_ids      = [aws_subnet.private_subnet.id] # Use private subnets for worker nodes
-  instance_types  = ["t3.medium"]                   # <--- Change this if needed
+  instance_types  = ["t3.medium"]                   # Default size
   scaling_config {
-    desired_size = 1
-    max_size     = 2
+    desired_size = 2
+    max_size     = 3
     min_size     = 1
   }
 }
