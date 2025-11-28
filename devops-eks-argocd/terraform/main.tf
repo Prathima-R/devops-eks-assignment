@@ -1,34 +1,26 @@
-# main.tf - EKS Cluster Provisioning without Modules
+# main.tf - Simplified EKS Cluster Provisioning without Modules
 
-# 1. AWS Provider and Region
+# 1. AWS Provider Configuration
 provider "aws" {
   region = var.region
 }
 
-# 2. Variables (Declared here for simplicity, typically in variables.tf)
-variable "region" {
-  default = "us-east-1" # <--- IMPORTANT: Change this to your preferred AWS region
-}
-
-variable "cluster_name" {
-  default = "simple-eks-cluster" # <--- IMPORTANT: Change to a unique cluster name
-}
-
 # --------------------------------------------------------
-# CORE INFRASTRUCTURE: VPC, Internet Gateway, Subnets
+# CORE INFRASTRUCTURE: VPC, Subnets, Internet Gateway
 # --------------------------------------------------------
 
-# 3. Virtual Private Cloud (VPC)
+# 2. Virtual Private Cloud (VPC)
 resource "aws_vpc" "eks_vpc" {
   cidr_block = "10.0.0.0/16"
   enable_dns_hostnames = true
   tags = {
     Name = "${var.cluster_name}-vpc"
+    # Required EKS tag for automatic discovery
     "kubernetes.io/cluster/${var.cluster_name}" = "owned"
   }
 }
 
-# 4. Internet Gateway
+# 3. Internet Gateway
 resource "aws_internet_gateway" "eks_igw" {
   vpc_id = aws_vpc.eks_vpc.id
   tags = {
@@ -36,36 +28,36 @@ resource "aws_internet_gateway" "eks_igw" {
   }
 }
 
-# 5. Public Subnet
+# 4. Public Subnet
 resource "aws_subnet" "public_subnet" {
   vpc_id                  = aws_vpc.eks_vpc.id
   cidr_block              = "10.0.10.0/24"
-  map_public_ip_on_launch = true 
+  map_public_ip_on_launch = true # Instances get a public IP
   availability_zone       = "${var.region}a"
   tags = {
     Name = "${var.cluster_name}-public-subnet"
-    "kubernetes.io/cluster/${var.cluster_name}" = "owned" 
-    "kubernetes.io/role/elb"                    = "1"      
+    "kubernetes.io/cluster/${var.cluster_name}" = "owned" # Required EKS tag
+    "kubernetes.io/role/elb"                    = "1"      # Required for Load Balancers
   }
 }
 
-# 6. Private Subnet
+# 5. Private Subnet
 resource "aws_subnet" "private_subnet" {
   vpc_id            = aws_vpc.eks_vpc.id
   cidr_block        = "10.0.20.0/24"
   availability_zone = "${var.region}b"
   tags = {
     Name = "${var.cluster_name}-private-subnet"
-    "kubernetes.io/cluster/${var.cluster_name}" = "owned" 
-    "kubernetes.io/role/internal-elb"           = "1"    
+    "kubernetes.io/cluster/${var.cluster_name}" = "owned"
+    "kubernetes.io/role/internal-elb"           = "1" # Required for Internal Load Balancers
   }
 }
 
 # --------------------------------------------------------
-# EKS COMPONENTS: IAM Roles and Cluster
+# EKS COMPONENTS: IAM Roles, Cluster, and Node Group
 # --------------------------------------------------------
 
-# 7. IAM Role for EKS Control Plane
+# 6. IAM Role for EKS Control Plane
 resource "aws_iam_role" "eks_master_role" {
   name = "${var.cluster_name}-master-role"
   assume_role_policy = jsonencode({
@@ -85,7 +77,7 @@ resource "aws_iam_role_policy_attachment" "eks_policy" {
   role       = aws_iam_role.eks_master_role.name
 }
 
-# 8. EKS Cluster
+# 7. EKS Cluster
 resource "aws_eks_cluster" "main" {
   name     = var.cluster_name
   role_arn = aws_iam_role.eks_master_role.arn
@@ -95,13 +87,9 @@ resource "aws_eks_cluster" "main" {
     subnet_ids         = [aws_subnet.public_subnet.id, aws_subnet.private_subnet.id]
     security_group_ids = []
   }
-
-  depends_on = [
-    aws_iam_role_policy_attachment.eks_policy,
-  ]
 }
 
-# 9. IAM Role for EKS Node Group (Worker Nodes)
+# 8. IAM Role for EKS Node Group (Worker Nodes)
 resource "aws_iam_role" "node_role" {
   name = "${var.cluster_name}-node-role"
   assume_role_policy = jsonencode({
@@ -126,27 +114,16 @@ resource "aws_iam_role_policy_attachment" "node_policy_2" {
   role       = aws_iam_role.node_role.name
 }
 
-# 10. EKS Managed Node Group (Worker Nodes)
+# 9. EKS Managed Node Group (Worker Nodes)
 resource "aws_eks_node_group" "main" {
   cluster_name    = aws_eks_cluster.main.name
-OAOAOA  node_group_name = "managed-nodes"
+  node_group_name = "managed-nodes"
   node_role_arn   = aws_iam_role.node_role.arn
-  subnet_ids      = [aws_subnet.private_subnet.id] 
-  instance_types  = ["t3.medium"]                   
+  subnet_ids      = [aws_subnet.private_subnet.id] # Use private subnets for worker nodes
+  instance_types  = ["t3.medium"]                   # <--- Change this if needed
   scaling_config {
     desired_size = 2
     max_size     = 3
     min_size     = 1
   }
-
-  depends_on = [
-    aws_iam_role_policy_attachment.node_policy_1,
-    aws_iam_role_policy_attachment.node_policy_2,
-  ]
-}
-
-# 11. Outputs (To get kubeconfig credentials)
-output "kubeconfig_command" {
-  description = "Command to configure kubectl access"
-  value       = "aws eks update-kubeconfig --name ${aws_eks_cluster.main.name} --region ${var.region}"
 }
