@@ -15,5 +15,5 @@ variable "cluster_name" {
 variable "ssh_key_name" {
   description = "Name of the EC2 Key Pair for SSH access to worker nodes."
   type        = string
-  default     = "pratice" # CRITICAL: Ensure a Key Pair with this exact name exists in your AWS region!
+  default     = "pratice" 
 }
