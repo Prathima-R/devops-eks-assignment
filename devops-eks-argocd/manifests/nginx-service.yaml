@@ -1,13 +1,11 @@
-# nginx-service.yaml
-
 apiVersion: v1
 kind: Service
 metadata:
   name: nginx-service
 spec:
+  type: LoadBalancer 
   selector:
     app: nginx
-  type: NodePort 
   ports:
     - protocol: TCP
       port: 80
