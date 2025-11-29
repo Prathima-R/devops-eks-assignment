@@ -9,7 +9,7 @@ spec:
   source:
     repoURL: https://github.com/Prathima-R/devops-eks-assignment.git
     targetRevision: HEAD
-    path: manifests/ 
+    path: devops-eks-argocd/manifests 
   destination:
     server: https://kubernetes.default.svc
     namespace: default 
