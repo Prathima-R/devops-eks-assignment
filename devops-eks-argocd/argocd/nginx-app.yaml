@@ -1,20 +1,21 @@
-# nginx-app.yaml
-
+# argocd/nginx-app.yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: nginx-app
-  namespace: argocd 
+  namespace: argocd
 spec:
   project: default
   source:
-    repoURL: https://github.com/Prathima-R/devops-eks-assignment.git
+    repoURL: https://github.com/Prathima-R/devops-eks-assignment/tree/main/devops-eks-argocd
     targetRevision: HEAD
-    path: manifests 
+    path: manifests/ 
   destination:
     server: https://kubernetes.default.svc
     namespace: default 
   syncPolicy:
-    automated: 
+    automated:
       prune: true
       selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
