@@ -1,4 +1,4 @@
-# main.tf - FINAL WORKING CODE: EKS Cluster Provisioning without NAT Gateway
+# main.tf - EKS Cluster Provisioning for Assignment (Simple Public Subnet Approach)
 
 # 1. AWS Provider Configuration
 provider "aws" {
@@ -6,21 +6,38 @@ provider "aws" {
 }
 
 # --------------------------------------------------------
-# CORE INFRASTRUCTURE: VPC, Subnets, Internet Gateway
+# CORE INFRASTRUCTURE: VPC and Public Subnets [cite: 10]
 # --------------------------------------------------------
 
-# 2. Virtual Private Cloud (VPC) - CRITICAL DNS FIX ADDED
+# 2. Virtual Private Cloud (VPC)
 resource "aws_vpc" "eks_vpc" {
   cidr_block              = "10.0.0.0/16"
   enable_dns_hostnames    = true
-  enable_dns_support      = true # <--- CRITICAL FIX: Ensures DNS resolution is enabled
+  enable_dns_support      = true
+
   tags = {
-    Name                                        = "${var.cluster_name}-vpc"
+    Name = "${var.cluster_name}-vpc"
     "kubernetes.io/cluster/${var.cluster_name}" = "owned"
   }
 }
 
-# 3. Internet Gateway
+# 3. Public Subnets (2 subnets across two AZs)
+resource "aws_subnet" "public_subnet" {
+  count = 2
+  vpc_id = aws_vpc.eks_vpc.id
+  cidr_block = cidrsubnet(aws_vpc.eks_vpc.cidr_block, 8, count.index)
+
+  availability_zone = element(["${var.region}a", "${var.region}b"], count.index)
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "${var.cluster_name}-public-subnet-${count.index}"
+    "kubernetes.io/cluster/${var.cluster_name}" = "owned"
+    "kubernetes.io/role/elb" = "1"
+  }
+}
+
+# 4. Internet Gateway & Routing
 resource "aws_internet_gateway" "eks_igw" {
   vpc_id = aws_vpc.eks_vpc.id
   tags = {
@@ -28,132 +45,153 @@ resource "aws_internet_gateway" "eks_igw" {
   }
 }
 
-# 4. Public Subnet
-resource "aws_subnet" "public_subnet" {
-  vpc_id                  = aws_vpc.eks_vpc.id
-  cidr_block              = "10.0.10.0/24"
-  map_public_ip_on_launch = true
-  availability_zone       = "${var.region}a"
-  tags = {
-    Name                                        = "${var.cluster_name}-public-subnet"
-    "kubernetes.io/cluster/${var.cluster_name}" = "owned"
-    "kubernetes.io/role/elb"                    = "1"
-  }
-}
-
-# 5. Private Subnet (Needed for EKS setup)
-resource "aws_subnet" "private_subnet" {
-  vpc_id            = aws_vpc.eks_vpc.id
-  cidr_block        = "10.0.20.0/24"
-  availability_zone = "${var.region}b"
-  tags = {
-    Name                                        = "${var.cluster_name}-private-subnet"
-    "kubernetes.io/cluster/${var.cluster_name}" = "owned"
-    "kubernetes.io/role/internal-elb"           = "1"
-  }
-}
-
-# 6. Public Route Table (Connects Public Subnet to Internet Gateway)
-resource "aws_route_table" "public_route_table" {
+resource "aws_route_table" "eks_rt" {
   vpc_id = aws_vpc.eks_vpc.id
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.eks_igw.id
+  }
+  tags = {
+    Name = "${var.cluster_name}-route-table"
+  }
 }
 
-resource "aws_route" "public_internet_route" {
-  route_table_id         = aws_route_table.public_route_table.id
-  destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.eks_igw.id
+resource "aws_route_table_association" "eks_rt_assoc" {
+  count = 2
+  subnet_id = aws_subnet.public_subnet[count.index].id
+  route_table_id = aws_route_table.eks_rt.id
 }
 
-resource "aws_route_table_association" "public_subnet_association" {
-  subnet_id      = aws_subnet.public_subnet.id
-  route_table_id = aws_route_table.public_route_table.id
+# 5. Security Groups
+resource "aws_security_group" "cluster_sg" {
+  vpc_id = aws_vpc.eks_vpc.id
+  egress {
+    from_port = 0
+    to_port   = 0
+    protocol  = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  tags = {
+    Name = "${var.cluster_name}-cluster-sg"
+  }
 }
 
+resource "aws_security_group" "node_sg" {
+  vpc_id = aws_vpc.eks_vpc.id
+  ingress {
+    from_port = 0
+    to_port   = 0
+    protocol  = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  egress {
+    from_port = 0
+    to_port   = 0
+    protocol  = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  tags = {
+    Name = "${var.cluster_name}-node-sg"
+  }
+}
 
 # --------------------------------------------------------
-# EKS COMPONENTS
+# IAM Roles 
 # --------------------------------------------------------
 
-# 7. IAM Role for EKS Control Plane
-resource "aws_iam_role" "eks_master_role" {
-  name = "${var.cluster_name}-master-role"
+# 6. IAM Role for EKS Control Plane
+resource "aws_iam_role" "eks_cluster_role" {
+  name = "${var.cluster_name}-cluster-role"
   assume_role_policy = jsonencode({
+    Version = "2012-10-17",
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "eks.amazonaws.com"
-      }
-    }]
-    Version = "2012-10-17"
+      Effect = "Allow",
+      Principal = { Service = "eks.amazonaws.com" },
+      Action = "sts:AssumeRole",
+    }],
   })
 }
-
-resource "aws_iam_role_policy_attachment" "eks_policy" {
+resource "aws_iam_role_policy_attachment" "cluster_policy" {
+  role       = aws_iam_role.eks_cluster_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-  role       = aws_iam_role.eks_master_role.name
 }
 
-# 8. EKS Cluster (Private Access Enabled for cost saving)
+# 7. IAM Role for Worker Nodes
+resource "aws_iam_role" "eks_node_role" {
+  name = "${var.cluster_name}-node-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow",
+      Principal = { Service = "ec2.amazonaws.com" },
+      Action = "sts:AssumeRole",
+    }],
+  })
+}
+resource "aws_iam_role_policy_attachment" "node_worker_policy" {
+  role       = aws_iam_role.eks_node_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+}
+resource "aws_iam_role_policy_attachment" "node_cni_policy" {
+  role       = aws_iam_role.eks_node_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+}
+resource "aws_iam_role_policy_attachment" "node_registry_policy" {
+  role       = aws_iam_role.eks_node_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
+# --------------------------------------------------------
+# EKS Cluster and Node Group [cite: 11, 12]
+# --------------------------------------------------------
+
+# 8. EKS Cluster
 resource "aws_eks_cluster" "main" {
   name     = var.cluster_name
-  role_arn = aws_iam_role.eks_master_role.arn
+  role_arn = aws_iam_role.eks_cluster_role.arn
   version  = "1.29"
 
   vpc_config {
-    subnet_ids         = [aws_subnet.public_subnet.id, aws_subnet.private_subnet.id]
-    security_group_ids = []
-    endpoint_private_access = true 
+    subnet_ids         = aws_subnet.public_subnet[*].id
+    security_group_ids = [aws_security_group.cluster_sg.id]
   }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.cluster_policy
+  ]
 }
 
-# 9. IAM Role for EKS Node Group (Worker Nodes)
-resource "aws_iam_role" "node_role" {
-  name = "${var.cluster_name}-node-role"
-  assume_role_policy = jsonencode({
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      }
-    }]
-    Version = "2012-10-17"
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "node_policy_1" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
-  role       = aws_iam_role.node_role.name
-}
-
-resource "aws_iam_role_policy_attachment" "node_policy_2" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
-  role       = aws_iam_role.node_role.name
-}
-
-# 10. EKS Managed Node Group (Worker Nodes)
+# 9. EKS Managed Node Group
 resource "aws_eks_node_group" "main" {
   cluster_name    = aws_eks_cluster.main.name
-  node_group_name = "managed-nodes"
-  node_role_arn   = aws_iam_role.node_role.arn
-  # ⬇️ FINAL FIX: USE PUBLIC SUBNET FOR RELIABILITY AND COST SAVING ⬇️
-  subnet_ids      = [aws_subnet.public_subnet.id] 
-  instance_types  = ["t3.medium"]
+  node_group_name = "${var.cluster_name}-node-group"
+  node_role_arn   = aws_iam_role.eks_node_role.arn
+  subnet_ids      = aws_subnet.public_subnet[*].id
+  instance_types  = ["t2.medium"]
+
   scaling_config {
     desired_size = 2
     max_size     = 3
     min_size     = 1
   }
+
+  # For SSH access, if needed:
+  # remote_access {
+  #   ec2_ssh_key             = var.ssh_key_name
+  #   source_security_group_ids = [aws_security_group.node_sg.id]
+  # }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.node_worker_policy,
+    aws_iam_role_policy_attachment.node_cni_policy,
+    aws_iam_role_policy_attachment.node_registry_policy
+  ]
 }
 
-# 11. Outputs
+# --------------------------------------------------------
+# Outputs 
+# --------------------------------------------------------
 output "kubeconfig_command" {
   description = "Command to configure kubectl access"
   value       = "aws eks update-kubeconfig --name ${aws_eks_cluster.main.name} --region ${var.region}"
-}
-
-output "cluster_endpoint" {
-  description = "The endpoint URL for the EKS control plane."
-  value       = aws_eks_cluster.main.endpoint
 }
