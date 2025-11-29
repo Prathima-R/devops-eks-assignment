@@ -8,6 +8,11 @@ This repository contains the infrastructure and application configuration to dep
 
 The objective is to provision all necessary infrastructure (VPC, EKS Cluster, Node Group) using **Terraform** and then automate the application deployment (NGINX) using **ArgoCD**. This deployment is **cost-optimized** and avoids the use of AWS NAT Gateways.
 
+/devops-eks-assignment
+│── terraform/
+│── manifests/
+│── argocd/
+│── README.md
 ##  Prerequisites
 
 You must have the following tools installed and configured on your machine:
