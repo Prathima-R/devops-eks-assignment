@@ -1,11 +1,11 @@
 variable "region" {
-  description = "AWS region where resources will be deployed."
-  type        = string
-  default     = "ap-south-2"
+  description = "The AWS region to deploy the EKS cluster in."
+  type        = string
+  default     = "ap-south-2"
 }
 
 variable "cluster_name" {
-  description = "A unique name for the EKS Cluster."
-  type        = string
-  default     = "prathima-devops-eks"
+  description = "The name of the EKS cluster."
+  type        = string
+  default     = "prathima-devops-eks"
 }
