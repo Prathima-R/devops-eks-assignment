@@ -10,7 +10,7 @@ spec:
   source:
     repoURL: https://github.com/Prathima-R/devops-eks-assignment.git
     targetRevision: HEAD
-    path: manifests # Points to the folder containing your YAMLs
+    path: manifests 
   destination:
     server: https://kubernetes.default.svc
     namespace: default 
