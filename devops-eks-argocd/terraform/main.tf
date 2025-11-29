@@ -187,11 +187,3 @@ resource "aws_eks_node_group" "main" {
     aws_iam_role_policy_attachment.node_registry_policy
   ]
 }
-
-# --------------------------------------------------------
-# Outputs 
-# --------------------------------------------------------
-output "kubeconfig_command" {
-  description = "Command to configure kubectl access"
-  value       = "aws eks update-kubeconfig --name ${aws_eks_cluster.main.name} --region ${var.region}"
-}
